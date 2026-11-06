@@ -399,11 +399,44 @@ def create_superuser_notification_settings(instance, created, **kwargs):
 
 
 @receiver(
+    pre_save, sender=Organization, dispatch_uid="org_reactivated_notification_setting"
+)
+def organization_pre_save(instance, **kwargs):
+    if instance._state.adding:
+        instance._was_active = None
+    else:
+        instance._was_active = (
+            Organization.objects.filter(pk=instance.pk)
+            .values_list("is_active", flat=True)
+            .first()
+        )
+
+
+@receiver(
     post_save, sender=Organization, dispatch_uid="org_created_notification_setting"
 )
 def notification_setting_org_created(created, instance, **kwargs):
     if created:
         transaction.on_commit(lambda: tasks.ns_organization_created.delay(instance.pk))
+
+
+@receiver(
+    post_save,
+    sender=Organization,
+    dispatch_uid="org_reactivated_notification_setting",
+)
+def notification_setting_org_reactivated(
+    created, instance, update_fields=None, **kwargs
+):
+    if (
+        not created
+        and instance._was_active is False
+        and instance.is_active
+        and (update_fields is None or "is_active" in update_fields)
+    ):
+        transaction.on_commit(
+            lambda: tasks.ns_organization_reactivated.delay(instance.pk)
+        )
 
 
 @receiver(

@@ -95,6 +95,32 @@ class TestNotificationSetting(
         self.assertEqual(ns_queryset.filter(deleted=False).count(), 1)
         self.assertEqual(ns_queryset.filter(deleted=True).count(), 1)
 
+    def test_reactivating_organization_restores_admin_notification_settings(self):
+        user = self._create_user(username="multi-org-admin", email="multi@example.com")
+        org_a = self._create_org(name="org-a", slug="org-a")
+        org_b = self._create_org(name="org-b", slug="org-b")
+        OrganizationUser.objects.create(user=user, organization=org_a, is_admin=True)
+        org_user_b = OrganizationUser.objects.create(
+            user=user, organization=org_b, is_admin=True
+        )
+        setting = ns_queryset.get(user=user, organization=org_a)
+        setting.email = False
+        setting.web = False
+        setting.save(update_fields=["email", "web"])
+
+        org_a.is_active = False
+        org_a.save(update_fields=["is_active"])
+        org_user_b.save()
+        setting.refresh_from_db()
+        self.assertTrue(setting.deleted)
+
+        org_a.is_active = True
+        org_a.save(update_fields=["is_active"])
+        setting.refresh_from_db()
+        self.assertFalse(setting.deleted)
+        self.assertFalse(setting.email)
+        self.assertFalse(setting.web)
+
     @mock_notification_types
     def test_register_notification_org_user(self):
         self._create_staff_org_admin()

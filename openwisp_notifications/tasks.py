@@ -278,6 +278,27 @@ def ns_organization_created(instance_id):
 
 
 @shared_task(base=OpenwispCeleryTask)
+def ns_organization_reactivated(instance_id):
+    """Restore notification settings for admins of a reactivated organization."""
+    organization = Organization.objects.get(id=instance_id)
+    for user in User.objects.filter(is_superuser=True).iterator():
+        create_notification_settings(
+            user=user,
+            organizations=[organization],
+            notification_types=types.NOTIFICATION_TYPES.keys(),
+        )
+    org_users = OrganizationUser.objects.filter(
+        organization=organization, is_admin=True, user__is_superuser=False
+    ).select_related("user")
+    for org_user in org_users.iterator():
+        create_notification_settings(
+            user=org_user.user,
+            organizations=[organization],
+            notification_types=types.NOTIFICATION_TYPES.keys(),
+        )
+
+
+@shared_task(base=OpenwispCeleryTask)
 def delete_ignore_object_notification(instance_id):
     """
     Deletes IgnoreObjectNotification object post it's expiration.

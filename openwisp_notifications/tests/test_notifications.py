@@ -46,6 +46,10 @@ from openwisp_notifications.types import (
     get_notification_configuration,
 )
 from openwisp_notifications.utils import _get_absolute_url, get_unsubscribe_url_for_user
+from openwisp_notifications.websockets.handlers import (
+    notification_state,
+    notification_update_handler,
+)
 from openwisp_users.tests.utils import TestOrganizationMixin
 from openwisp_utils.tests import AssertNumQueriesSubTestMixin, capture_any_output
 
@@ -104,6 +108,68 @@ class TestNotifications(
                 with self.assertRaisesRegex(ValueError, "type is required"):
                     notify.send(**options, **invalid_type)
                 self.assertFalse(notification_queryset.exists())
+
+    def test_notification_state_uses_one_aggregate_query(self):
+        Notification.objects.bulk_create(
+            [
+                Notification(
+                    actor=self.admin,
+                    recipient=self.admin,
+                    verb="Test Notification",
+                    type="default",
+                )
+            ]
+        )
+        cache.delete(f"ow-noti-storm-{self.admin.pk}")
+
+        with self.assertNumQueries(1):
+            in_storm, unread_count = notification_state(self.admin)
+
+        self.assertFalse(in_storm)
+        self.assertEqual(unread_count, 1)
+
+    def test_notification_state_cached_storm_skips_storm_counts(self):
+        storm_key = f"ow-noti-storm-{self.admin.pk}"
+        cache.set(storm_key, True, 60)
+        self.addCleanup(cache.delete, storm_key)
+
+        with self.assertNumQueries(1):
+            in_storm, unread_count = notification_state(self.admin)
+
+        self.assertTrue(in_storm)
+        self.assertEqual(unread_count, 0)
+
+    def test_notification_state_detects_storm(self):
+        storm_key = f"ow-noti-storm-{self.admin.pk}"
+        cache.delete(storm_key)
+        self.addCleanup(cache.delete, storm_key)
+        limit = app_settings.NOTIFICATION_STORM_PREVENTION[
+            "short_term_notification_count"
+        ]
+        Notification.objects.bulk_create(
+            [
+                Notification(
+                    actor=self.admin,
+                    recipient=self.admin,
+                    verb="Test Notification",
+                    type="default",
+                )
+                for _ in range(limit + 1)
+            ]
+        )
+
+        with self.assertNumQueries(1):
+            in_storm, unread_count = notification_state(self.admin)
+
+        self.assertTrue(in_storm)
+        self.assertEqual(unread_count, limit + 1)
+        self.assertTrue(cache.get(storm_key))
+
+    def test_notification_update_handler_queries(self):
+        cache.delete(f"ow-noti-storm-{self.admin.pk}")
+
+        with self.assertNumQueries(1):
+            notification_update_handler(recipient=self.admin)
 
     def test_create_notification(self):
         operator = super()._create_operator()

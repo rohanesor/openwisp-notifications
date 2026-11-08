@@ -46,6 +46,7 @@ from openwisp_notifications.types import (
     get_notification_configuration,
 )
 from openwisp_notifications.utils import _get_absolute_url, get_unsubscribe_url_for_user
+from openwisp_notifications.websockets.handlers import notification_state
 from openwisp_users.tests.utils import TestOrganizationMixin
 from openwisp_utils.tests import AssertNumQueriesSubTestMixin, capture_any_output
 
@@ -104,6 +105,25 @@ class TestNotifications(
                 with self.assertRaisesRegex(ValueError, "type is required"):
                     notify.send(**options, **invalid_type)
                 self.assertFalse(notification_queryset.exists())
+
+    def test_notification_state_uses_one_aggregate_query(self):
+        Notification.objects.bulk_create(
+            [
+                Notification(
+                    actor=self.admin,
+                    recipient=self.admin,
+                    verb="Test Notification",
+                    type="default",
+                )
+            ]
+        )
+        cache.delete(f"ow-noti-storm-{self.admin.pk}")
+
+        with self.assertNumQueries(1):
+            in_storm, unread_count = notification_state(self.admin)
+
+        self.assertFalse(in_storm)
+        self.assertEqual(unread_count, 1)
 
     def test_create_notification(self):
         operator = super()._create_operator()
